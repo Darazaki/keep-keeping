@@ -1,87 +1,113 @@
-#![forbid(unsafe_code)]
-
 use filetime::FileTime;
 use itertools::Itertools;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::fs;
 use walkdir::*;
 
+type SyncResult<'t> = std::result::Result<(), &'t std::error::Error>;
+
+#[allow(unused_macros)]
 macro_rules! unused {
     ( $($x:ident), * ) => {
         {$( let _ = $x; )*}
     };
 }
 
-pub fn synchronize(dir1: &str, dir2: &str) {
-    const DIR1_ID: i8 = 0;
-    const DIR2_ID: i8 = 1;
+fn trim_base_path(base_path: &str, entry_path: &str) -> Option<PathBuf> {
+    let mut base_bytes = base_path.bytes();
+    let entry_bytes = entry_path.bytes();
 
+    let trimmed_path_bytes: Vec<_> = entry_bytes
+        .skip_while(|b| Some(*b) == base_bytes.next())
+        .skip(1)
+        .collect();
+
+    if let Ok(trimmed_path) = String::from_utf8(trimmed_path_bytes) {
+        Some(PathBuf::from(trimmed_path))
+    } else {
+        None
+    }
+}
+
+pub fn synchronize<'r>(path1: &Path, path2: &Path) -> SyncResult<'r> {
+    if path1.is_dir() {
+        if path2.is_dir() {
+            // path1 & path2: dir
+            synchronize_dirs(path1, path2)
+        } else {
+            // path1: dir, path2: file
+            synchronize_file_with_dir(path2, path1)
+        }
+    } else if path2.is_file() {
+        // path1 & path2: file
+        synchronize_files(path1, path2)
+    } else {
+        // path1: file, path2: dir
+        synchronize_file_with_dir(path1, path2)
+    }
+}
+
+/*
+const DIR1_NOT_SYMLINK_ID: u8 = 0;
+const DIR2_NOT_SYMLINK_ID: u8 = 1;
+const DIR1_SYMLINK_ID: u8 = 2;
+const DIR2_SYMLINK_ID: u8 = 3;
+*/
+
+macro_rules! some_or_return {
+    ($e:expr) => {
+        match $e {
+            Some(x) => x,
+            None => return None,
+        }
+    };
+}
+
+#[inline]
+fn id_and_relative_path_from_dir_entry<'r>(
+    entry: &'r Result<DirEntry>,
+    base_path: &'r Path,
+    dir_id_no_symlink: u8,
+) -> Option<(u8, PathBuf)> {
+    match entry {
+        Err(err) => {
+            eprintln!("{}", err);
+            None
+        }
+        Ok(entry) => {
+            let dir_id = if entry.path_is_symlink() { 2 } else { 0 } + dir_id_no_symlink;
+            let path: &Path = entry.path();
+
+            let path_str = some_or_return!(path.to_str());
+            let base_path_str = some_or_return!(base_path.to_str());
+            let trimmed = some_or_return!(trim_base_path(base_path_str, path_str));
+
+            Some((dir_id, trimmed))
+        }
+    }
+}
+
+#[inline]
+fn synchronize_dirs<'r>(dir1: &Path, dir2: &Path) -> SyncResult<'r> {
     let dir_iterator = WalkDir::new(dir1)
+        .min_depth(1)
         .into_iter()
-        .map(|e| (DIR1_ID, e))
-        .chain(WalkDir::new(dir2).into_iter().map(|e| (DIR2_ID, e)))
-        .filter_map(|(dir_id, e)| {
-            if let Ok(e) = e {
-                // if e is ok
-                if let Some(path) = e.path().to_str() {
-                    // if path is valid UTF-8
-                    if dir_id == DIR1_ID {
-                        // if dir1
-                        if let Some(path) = trim_base_path(dir1, path) {
-                            // make path relative
-                            if path != "" {
-                                // if not dir1 path
-                                Some((DIR1_ID, path))
-                            } else {
-                                // path is dir1 path => skip
-                                None
-                            }
-                        } else {
-                            // not valid UTF-8 (should never happen since it's already checked for)
-                            None
-                        }
-                    } else if let Some(path) = trim_base_path(dir2, path) {
-                        // if dir1; make path relative
-                        if path != "" {
-                            // if not dir1 path
-                            Some((DIR2_ID, path))
-                        } else {
-                            // path is dir1 path => skip
-                            None
-                        }
-                    } else {
-                        // not valid UTF-8 (should never happen since it's already checked for)
-                        None
-                    }
-                } else {
-                    // path is not valid UTF-8
-                    None
-                }
-            } else {
-                // e is not ok
-                None
-            }
-        })
+        .filter_map(|e| id_and_relative_path_from_dir_entry(&e, dir1, 0))
+        .chain(
+            WalkDir::new(dir2)
+                .min_depth(1)
+                .into_iter()
+                .filter_map(|e| id_and_relative_path_from_dir_entry(&e, dir2, 1)),
+        )
         .unique_by(|tup| tup.1.clone()); // never synchronize the same path twice
 
-    // `&str` to `String` conversion, we will need to use the `+` concatenation operator that is available
-    // for `String` but not for `&str`.
-    let dir1 = String::from(dir1);
-    let dir2 = String::from(dir2);
-
     for (dir_id, relative_path) in dir_iterator {
-        // `relative_path` is in the format "/relative/path",
-        // `dir1` and `dir2` are in the format "/path/to/dir".
-        let path_in_dir1 = dir1.clone() + &relative_path;
-        let path_in_dir2 = dir2.clone() + &relative_path;
-
-        // `String` to `Path` conversion, we will do path operation with those strings so it's more
-        // efficient to convert them now.
-        let path_in_dir1 = Path::new(&path_in_dir1);
-        let path_in_dir2 = Path::new(&path_in_dir2);
+        let path_in_dir1 = dir1.join(&relative_path);
+        let path_in_dir2 = dir2.join(&relative_path);
 
         // `path_in_dir` is where the element is in the scanned directory,
         // `path_in_other_dir` is where the element should be in the other directory.
-        let (path_in_dir, path_in_other_dir) = if dir_id == DIR1_ID {
+        let (path_in_dir, path_in_other_dir) = if dir_id % 2 == 0 {
             (path_in_dir1, path_in_dir2)
         } else {
             (path_in_dir2, path_in_dir1)
@@ -92,82 +118,146 @@ pub fn synchronize(dir1: &str, dir2: &str) {
                 // `path_in_other_dir` exists and points to a file
                 // Check timestamps, and overwrite the older with the recent one.
 
-                let time_in_dir = FileTime::from_last_modification_time(
-                    &std::fs::metadata(path_in_dir).expect("This should never happen"),
-                );
-
-                let time_in_other_dir = FileTime::from_last_modification_time(
-                    &std::fs::metadata(path_in_other_dir).expect("This should never happen"),
-                );
-
-                let (source_path, target_path) = if time_in_dir > time_in_other_dir {
-                    (path_in_dir, path_in_other_dir)
-                } else if time_in_dir < time_in_other_dir {
-                    (path_in_other_dir, path_in_dir)
-                } else {
-                    continue; // already synchronized => skip
-                };
-
-                if let Some(parent_path) = target_path.parent() {
-                    if !parent_path.exists() {
-                        // should be created before => should never happen
-                        if let Err(err) = std::fs::create_dir_all(parent_path) {
-                            eprintln!("Error while creating directories: {}", err);
-                            continue; // failure => skip
-                        }
-                    }
-                }
-
-                if let Err(err) = std::fs::copy(source_path, target_path) {
-                    eprintln!("Error while copying file: {}", err);
-                }
+                synchronize_files(&path_in_dir, &path_in_other_dir)?;
+            } else if path_in_other_dir.is_dir() {
+                synchronize_file_with_dir(&path_in_dir, &path_in_other_dir)?;
             } else {
                 // path does not exist in other dir
                 if let Some(parent_path) = path_in_other_dir.parent() {
                     if !parent_path.exists() {
                         if let Err(err) = std::fs::create_dir_all(parent_path) {
-                            eprintln!("Error while creating directories: {}", err);
+                            eprintln!("{}", &err);
                             continue; // skip
                         }
                     }
                 }
 
                 if let Err(err) = std::fs::copy(path_in_dir, path_in_other_dir) {
-                    eprintln!("Error while copying file: {}", err);
+                    eprintln!("{}", &err);
                 }
             }
         } else if !path_in_other_dir.exists() {
             // path in dir is a dir
             if let Err(err) = std::fs::create_dir(path_in_other_dir) {
-                eprintln!("Error while creating directory: {}", err);
+                eprintln!("{}", &err);
+            }
+        } else {
+            // path_in_dir: dir, path_in_other_dir: file
+
+            synchronize_file_with_dir(&path_in_other_dir, &path_in_dir)?;
+        }
+    }
+
+    Ok(())
+}
+
+#[inline]
+fn synchronize_files<'r>(path1: &Path, path2: &Path) -> SyncResult<'r> {
+    let time_in_dir = FileTime::from_last_modification_time(
+        &std::fs::metadata(path1).expect("This should never happen"),
+    );
+
+    let time_in_other_dir = FileTime::from_last_modification_time(
+        &std::fs::metadata(path2).expect("This should never happen"),
+    );
+
+    let (source_path, target_path) = if time_in_dir > time_in_other_dir {
+        (path1, path2)
+    } else if time_in_dir < time_in_other_dir {
+        (path2, path1)
+    } else {
+        return Ok(()); // already synchronized => skip
+    };
+
+    if let Some(parent_path) = target_path.parent() {
+        if !parent_path.exists() {
+            // should be created before => should never happen
+            if let Err(err) = std::fs::create_dir_all(parent_path) {
+                eprintln!("{}", &err);
+                return Ok(()); // failure => skip
             }
         }
     }
+
+    if let Err(err) = std::fs::copy(source_path, target_path) {
+        eprintln!("{}", &err);
+    }
+
+    Ok(())
 }
 
-fn trim_base_path(base_path: &str, entry_path: &str) -> Option<String> {
-    let mut base_bytes = base_path.bytes();
-    let entry_bytes = entry_path.bytes();
+#[inline]
+fn synchronize_file_with_dir<'r>(file_path: &Path, dir_path: &Path) -> SyncResult<'r> {
+    macro_rules! unwrap_result {
+        ($e:expr) => {
+            match $e {
+                Err(err) => return {
+                    eprintln!("{}", err);
+                    Ok(())
+                },
+                Ok(x) => x,
+            }
+        };
+    }
 
-    let trimmed_path_bytes: Vec<_> = entry_bytes
-        .skip_while(|b| Some(*b) == base_bytes.next())
-        .collect();
+    let file_time = FileTime::from_last_modification_time(
+        &unwrap_result!(file_path.metadata())
+    );
 
-    if let Ok(trimmed_path) = String::from_utf8(trimmed_path_bytes) {
-        Some(trimmed_path)
-    } else {
-        None
+    let dir_time = match dir_latest_modification_time(dir_path) {
+        Ok(x) => x,
+        Err(err) => return {
+            eprintln!("{}", err);
+            Ok(())
+        },
+    };
+
+    if file_time > dir_time {
+        unwrap_result!(fs::remove_dir_all(dir_path));
+        unwrap_result!(fs::copy(file_path, dir_path));
+    }
+
+    Ok(())
+}
+
+#[inline]
+fn dir_latest_modification_time<'r, 't>(
+    path: &'t Path,
+) -> std::result::Result<FileTime, &'r std::error::Error> {
+    let result_err: Option<&std::error::Error> = None;
+
+    let max = WalkDir::new(path)
+        .into_iter()
+        .filter_map(|e: walkdir::Result<DirEntry>| {
+            macro_rules! unwrap_result {
+                ($e:expr) => {
+                    match $e {
+                        Err(err) => {
+                            eprintln!("{}", &err);
+                            return None;
+                        },
+                        Ok(x) => x,
+                    }
+                };
+            }
+
+            let e = unwrap_result!(e);
+
+            let path: &Path = e.path();
+            
+            Some(FileTime::from_last_modification_time(
+                &unwrap_result!(path.metadata())
+            ))
+        })
+        .max().unwrap_or_else(FileTime::zero);
+    
+    match result_err {
+        Some(err) => Err(err),
+        None => Ok(max),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn trim_base_path_test() {
-        use super::trim_base_path;
-        assert_eq!(
-            trim_base_path("/Hi/there", "/Hi/there/you").expect("Invalid Unicode"),
-            "/you"
-        );
-    }
+    
 }
