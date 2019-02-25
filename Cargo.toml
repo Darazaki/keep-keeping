@@ -9,4 +9,3 @@ walkdir = "2"
 filetime = "0.2"
 iui = { git = "https://github.com/rust-native-ui/libui-rs.git" }
 nfd = "0.0.4"
-itertools = "0.8"

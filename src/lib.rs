@@ -1,5 +1,4 @@
 use filetime::FileTime;
-use itertools::Itertools;
 use std::path::{Path, PathBuf};
 use std::fs;
 use walkdir::*;
@@ -97,9 +96,10 @@ fn synchronize_dirs<'r>(dir1: &Path, dir2: &Path) -> SyncResult<'r> {
             WalkDir::new(dir2)
                 .min_depth(1)
                 .into_iter()
-                .filter_map(|e| id_and_relative_path_from_dir_entry(&e, dir2, 1)),
-        )
-        .unique_by(|tup| tup.1.clone()); // never synchronize the same path twice
+                .filter_map(|e| id_and_relative_path_from_dir_entry(&e, dir2, 1))
+                // never synchronize the same path twice
+                .filter(|(_, rel_path)| !dir1.join(rel_path).exists()),
+        );
 
     for (dir_id, relative_path) in dir_iterator {
         let path_in_dir1 = dir1.join(&relative_path);
