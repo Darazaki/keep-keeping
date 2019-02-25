@@ -1,9 +1,9 @@
 use filetime::FileTime;
-use std::path::{Path, PathBuf};
 use std::fs;
-use walkdir::*;
+use std::path::{Path, PathBuf};
+use walkdir::{DirEntry, WalkDir};
 
-type SyncResult<'t> = std::result::Result<(), &'t std::error::Error>;
+type SyncResult<'t> = Result<(), &'t std::error::Error>;
 
 #[allow(unused_macros)]
 macro_rules! unused {
@@ -64,7 +64,7 @@ macro_rules! some_or_return {
 
 #[inline]
 fn id_and_relative_path_from_dir_entry<'r>(
-    entry: &'r Result<DirEntry>,
+    entry: &'r walkdir::Result<DirEntry>,
     base_path: &'r Path,
     dir_id_no_symlink: u8,
 ) -> Option<(u8, PathBuf)> {
@@ -191,25 +191,27 @@ fn synchronize_file_with_dir<'r>(file_path: &Path, dir_path: &Path) -> SyncResul
     macro_rules! unwrap_result {
         ($e:expr) => {
             match $e {
-                Err(err) => return {
-                    eprintln!("{}", err);
-                    Ok(())
-                },
+                Err(err) => {
+                    return {
+                        eprintln!("{}", err);
+                        Ok(())
+                    }
+                }
                 Ok(x) => x,
             }
         };
     }
 
-    let file_time = FileTime::from_last_modification_time(
-        &unwrap_result!(file_path.metadata())
-    );
+    let file_time = FileTime::from_last_modification_time(&unwrap_result!(file_path.metadata()));
 
     let dir_time = match dir_latest_modification_time(dir_path) {
         Ok(x) => x,
-        Err(err) => return {
-            eprintln!("{}", err);
-            Ok(())
-        },
+        Err(err) => {
+            return {
+                eprintln!("{}", err);
+                Ok(())
+            }
+        }
     };
 
     if file_time > dir_time {
@@ -221,9 +223,7 @@ fn synchronize_file_with_dir<'r>(file_path: &Path, dir_path: &Path) -> SyncResul
 }
 
 #[inline]
-fn dir_latest_modification_time<'r, 't>(
-    path: &'t Path,
-) -> std::result::Result<FileTime, &'r std::error::Error> {
+fn dir_latest_modification_time<'r, 't>(path: &'t Path) -> Result<FileTime, &'r std::error::Error> {
     let result_err: Option<&std::error::Error> = None;
 
     let max = WalkDir::new(path)
@@ -235,7 +235,7 @@ fn dir_latest_modification_time<'r, 't>(
                         Err(err) => {
                             eprintln!("{}", &err);
                             return None;
-                        },
+                        }
                         Ok(x) => x,
                     }
                 };
@@ -244,13 +244,14 @@ fn dir_latest_modification_time<'r, 't>(
             let e = unwrap_result!(e);
 
             let path: &Path = e.path();
-            
-            Some(FileTime::from_last_modification_time(
-                &unwrap_result!(path.metadata())
-            ))
+
+            Some(FileTime::from_last_modification_time(&unwrap_result!(
+                path.metadata()
+            )))
         })
-        .max().unwrap_or_else(FileTime::zero);
-    
+        .max()
+        .unwrap_or_else(FileTime::zero);
+
     match result_err {
         Some(err) => Err(err),
         None => Ok(max),
@@ -258,6 +259,4 @@ fn dir_latest_modification_time<'r, 't>(
 }
 
 #[cfg(test)]
-mod tests {
-    
-}
+mod tests {}
