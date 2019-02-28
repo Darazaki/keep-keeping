@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use filetime::FileTime;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -123,14 +125,6 @@ fn synchronize_dirs<'r>(dir1: &Path, dir2: &Path) -> SyncResult<'r> {
                 synchronize_file_with_dir(&path_in_dir, &path_in_other_dir)?;
             } else {
                 // path does not exist in other dir
-                if let Some(parent_path) = path_in_other_dir.parent() {
-                    if !parent_path.exists() {
-                        if let Err(err) = std::fs::create_dir_all(parent_path) {
-                            eprintln!("{}", &err);
-                            continue; // skip
-                        }
-                    }
-                }
 
                 if let Err(err) = std::fs::copy(path_in_dir, path_in_other_dir) {
                     eprintln!("{}", &err);
@@ -217,6 +211,61 @@ fn synchronize_file_with_dir<'r>(file_path: &Path, dir_path: &Path) -> SyncResul
     if file_time > dir_time {
         unwrap_result!(fs::remove_dir_all(dir_path));
         unwrap_result!(fs::copy(file_path, dir_path));
+    } else {
+        unwrap_result!(fs::remove_file(file_path));
+        unwrap_result!(fs::create_dir(file_path));
+
+        // Copy dir_path -> file_path
+
+        let relative_path_iter = WalkDir::new(dir_path)
+            .min_depth(1)
+            .into_iter()
+            // Get path
+            .filter_map(|e: walkdir::Result<DirEntry>| {
+                match e {
+                    Ok(x) => Some(x.path().to_owned()),
+                    Err(err) => {
+                        eprintln!("{}", err);
+                        None
+                    }
+                }
+            })
+            // Get path string representation
+            .filter_map(|absolute_path: PathBuf| {
+                match absolute_path.to_str() {
+                    None => None,
+                    Some(absolute_path_str) => {
+                        Some(absolute_path_str.to_owned())
+                    }
+                }
+            })
+            // Get relative path (returns a PathBuf)
+            .filter_map(|absolute_path_str: String| {
+                match dir_path.to_str() {
+                    None => None,
+                    Some(dir_path_str) => {
+                        trim_base_path(dir_path_str, &absolute_path_str)
+                    },
+                }
+            });
+        
+        for relative_path in relative_path_iter {
+            let relative_path: &Path = &relative_path;
+            let path_in_dir = dir_path.join(relative_path);
+            let path_in_file = file_path.join(relative_path);
+
+            if path_in_dir.is_dir() {
+                match fs::create_dir(path_in_file) {
+                    Ok(_) => (),
+                    Err(err) => eprintln!("{}", err),
+                };
+            } else {
+                match fs::copy(path_in_dir, path_in_file) {
+                    Ok(_) => (),
+                    Err(err) => eprintln!("{}", err),
+                };
+            }
+        }
     }
 
     Ok(())
