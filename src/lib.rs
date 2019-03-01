@@ -155,10 +155,10 @@ fn synchronize_files<'r>(path1: &Path, path2: &Path) -> SyncResult<'r> {
         &std::fs::metadata(path2).expect("This should never happen"),
     );
 
-    let (source_path, target_path) = if time_in_dir > time_in_other_dir {
-        (path1, path2)
+    let (source_path, target_path, max_time) = if time_in_dir > time_in_other_dir {
+        (path1, path2, time_in_dir)
     } else if time_in_dir < time_in_other_dir {
-        (path2, path1)
+        (path2, path1, time_in_other_dir)
     } else {
         return Ok(()); // already synchronized => skip
     };
@@ -167,14 +167,18 @@ fn synchronize_files<'r>(path1: &Path, path2: &Path) -> SyncResult<'r> {
         if !parent_path.exists() {
             // should be created before => should never happen
             if let Err(err) = std::fs::create_dir_all(parent_path) {
-                eprintln!("{}", &err);
+                eprintln!("{}", err);
                 return Ok(()); // failure => skip
             }
         }
     }
 
     if let Err(err) = std::fs::copy(source_path, target_path) {
-        eprintln!("{}", &err);
+        eprintln!("{}", err);
+    }
+
+    if let Err(err) = filetime::set_file_times(source_path, max_time, max_time) {
+        eprintln!("{}", err)
     }
 
     Ok(())
@@ -211,6 +215,7 @@ fn synchronize_file_with_dir<'r>(file_path: &Path, dir_path: &Path) -> SyncResul
     if file_time > dir_time {
         unwrap_result!(fs::remove_dir_all(dir_path));
         unwrap_result!(fs::copy(file_path, dir_path));
+        unwrap_result!(filetime::set_file_times(dir_path, file_time, file_time));
     } else {
         unwrap_result!(fs::remove_file(file_path));
         unwrap_result!(fs::create_dir(file_path));
@@ -250,22 +255,29 @@ fn synchronize_file_with_dir<'r>(file_path: &Path, dir_path: &Path) -> SyncResul
             });
         
         for relative_path in relative_path_iter {
+            macro_rules! handle_on_error {
+                ($e:expr) => {
+                    match $e {
+                        Ok(_) => (),
+                        Err(err) => eprintln!("{}", err),
+                    }
+                };
+            }
+
             let relative_path: &Path = &relative_path;
             let path_in_dir = dir_path.join(relative_path);
             let path_in_file = file_path.join(relative_path);
 
             if path_in_dir.is_dir() {
-                match fs::create_dir(path_in_file) {
-                    Ok(_) => (),
-                    Err(err) => eprintln!("{}", err),
-                };
+                handle_on_error!(fs::create_dir(&path_in_file));
             } else {
-                match fs::copy(path_in_dir, path_in_file) {
-                    Ok(_) => (),
-                    Err(err) => eprintln!("{}", err),
-                };
+                handle_on_error!(fs::copy(&path_in_dir, &path_in_file));
             }
+
+            handle_on_error!(filetime::set_file_times(&path_in_file, dir_time, dir_time));
         }
+
+        unwrap_result!(filetime::set_file_times(file_path, dir_time, file_time));
     }
 
     Ok(())
