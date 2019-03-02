@@ -13,7 +13,8 @@ This program will overwrite the files with the oldest modification date with the
 - [x] Allow initial path pointing to a file;
 - [ ] Handle symbolic links:
     - recreate the link if it points to a path within the synchronized directory;
-    - copy the contents if the link points to a path outside of the synchronized directory.
+    - copy the contents if the link points to a path outside of the synchronized directory;
+- [x] Handle macOS apps.
 
 ## Warranties
 

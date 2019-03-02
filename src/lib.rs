@@ -30,11 +30,47 @@ fn trim_base_path(base_path: &str, entry_path: &str) -> Option<PathBuf> {
     }
 }
 
+#[inline]
+fn path_has_extension(path: &Path, extension: &str) -> bool {
+    path.extension() == Some(std::ffi::OsStr::new(extension))
+}
+
+#[inline]
+fn is_mac_app(path: &Path) -> bool {
+    // A macOS app must have the 'app' extension and be a directory.
+    path_has_extension(path, "app") && path.is_dir()
+}
+
+fn is_part_of_mac_app(path: &Path) -> bool {
+    let mut current_path_option = path.parent();
+
+    while current_path_option.is_some() {
+        let current_path: &Path = current_path_option.unwrap();
+
+        if is_mac_app(current_path) {
+            return true;
+        }
+
+        current_path_option = current_path.parent();
+    }
+
+    false
+}
+
 pub fn synchronize<'r>(path1: &Path, path2: &Path) -> SyncResult<'r> {
     if path1.is_dir() {
         if path2.is_dir() {
             // path1 & path2: dir
-            synchronize_dirs(path1, path2)
+
+            if path_has_extension(path1, "app") || path_has_extension(path2, "app") {
+                // macOS app(s)
+
+                synchronize_dirs_replace(path1, path2)
+            } else {
+                // regular dir(s)
+
+                synchronize_dirs(path1, path2)
+            }
         } else {
             // path1: dir, path2: file
             synchronize_file_with_dir(path2, path1)
@@ -64,7 +100,6 @@ macro_rules! some_or_return {
     };
 }
 
-#[inline]
 fn id_and_relative_path_from_dir_entry<'r>(
     entry: &'r walkdir::Result<DirEntry>,
     base_path: &'r Path,
@@ -88,7 +123,6 @@ fn id_and_relative_path_from_dir_entry<'r>(
     }
 }
 
-#[inline]
 fn synchronize_dirs<'r>(dir1: &Path, dir2: &Path) -> SyncResult<'r> {
     let dir_iterator = WalkDir::new(dir1)
         .min_depth(1)
@@ -115,6 +149,9 @@ fn synchronize_dirs<'r>(dir1: &Path, dir2: &Path) -> SyncResult<'r> {
             (path_in_dir2, path_in_dir1)
         };
 
+        // Paths that are part of a macOS app are already handled if they exists in both dirs => skip.
+        if is_part_of_mac_app(&path_in_dir) && path_in_other_dir.exists() { continue }
+
         if path_in_dir.is_file() {
             if path_in_other_dir.is_file() {
                 // `path_in_other_dir` exists and points to a file
@@ -131,21 +168,25 @@ fn synchronize_dirs<'r>(dir1: &Path, dir2: &Path) -> SyncResult<'r> {
                 }
             }
         } else if !path_in_other_dir.exists() {
-            // path in dir is a dir
+            // path_in_dir: dir, path_in_other_dir: nothing
+
             if let Err(err) = std::fs::create_dir(path_in_other_dir) {
                 eprintln!("{}", &err);
             }
-        } else {
+        } else if path_in_other_dir.is_file() {
             // path_in_dir: dir, path_in_other_dir: file
 
             synchronize_file_with_dir(&path_in_other_dir, &path_in_dir)?;
+        } else if is_mac_app(&path_in_dir) {
+            // path_in_dir: dir (macOS app), path_in_other_dir: dir (macOS app)
+
+            synchronize_dirs_replace(&path_in_dir, &path_in_other_dir)?;
         }
     }
 
     Ok(())
 }
 
-#[inline]
 fn synchronize_files<'r>(path1: &Path, path2: &Path) -> SyncResult<'r> {
     let time_in_dir = FileTime::from_last_modification_time(
         &std::fs::metadata(path1).expect("This should never happen"),
@@ -184,7 +225,6 @@ fn synchronize_files<'r>(path1: &Path, path2: &Path) -> SyncResult<'r> {
     Ok(())
 }
 
-#[inline]
 fn synchronize_file_with_dir<'r>(file_path: &Path, dir_path: &Path) -> SyncResult<'r> {
     macro_rules! unwrap_result {
         ($e:expr) => {
@@ -219,71 +259,110 @@ fn synchronize_file_with_dir<'r>(file_path: &Path, dir_path: &Path) -> SyncResul
     } else {
         unwrap_result!(fs::remove_file(file_path));
         unwrap_result!(fs::create_dir(file_path));
-
-        // Copy dir_path -> file_path
-
-        let relative_path_iter = WalkDir::new(dir_path)
-            .min_depth(1)
-            .into_iter()
-            // Get path
-            .filter_map(|e: walkdir::Result<DirEntry>| {
-                match e {
-                    Ok(x) => Some(x.path().to_owned()),
-                    Err(err) => {
-                        eprintln!("{}", err);
-                        None
-                    }
-                }
-            })
-            // Get path string representation
-            .filter_map(|absolute_path: PathBuf| {
-                match absolute_path.to_str() {
-                    None => None,
-                    Some(absolute_path_str) => {
-                        Some(absolute_path_str.to_owned())
-                    }
-                }
-            })
-            // Get relative path (returns a PathBuf)
-            .filter_map(|absolute_path_str: String| {
-                match dir_path.to_str() {
-                    None => None,
-                    Some(dir_path_str) => {
-                        trim_base_path(dir_path_str, &absolute_path_str)
-                    },
-                }
-            });
-        
-        for relative_path in relative_path_iter {
-            macro_rules! handle_on_error {
-                ($e:expr) => {
-                    match $e {
-                        Ok(_) => (),
-                        Err(err) => eprintln!("{}", err),
-                    }
-                };
-            }
-
-            let relative_path: &Path = &relative_path;
-            let path_in_dir = dir_path.join(relative_path);
-            let path_in_file = file_path.join(relative_path);
-
-            if path_in_dir.is_dir() {
-                handle_on_error!(fs::create_dir(&path_in_file));
-            } else {
-                handle_on_error!(fs::copy(&path_in_dir, &path_in_file));
-            }
-
-            handle_on_error!(filetime::set_file_times(&path_in_file, dir_time, dir_time));
-        }
-
-        unwrap_result!(filetime::set_file_times(file_path, dir_time, file_time));
+        copy_dir(dir_path, file_path, dir_time)?;
     }
 
     Ok(())
 }
 
-#[inline]
+fn copy_dir<'t1, 't2, 'r>(source: &'t1 Path, target: &'t2 Path, time: FileTime) -> SyncResult<'r> {
+    let relative_path_iter = WalkDir::new(source)
+        .min_depth(1)
+        .into_iter()
+        // Get path
+        .filter_map(|e: walkdir::Result<DirEntry>| {
+            match e {
+                Ok(x) => Some(x.path().to_owned()),
+                Err(err) => {
+                    eprintln!("{}", err);
+                    None
+                }
+            }
+        })
+        // Get path string representation
+        .filter_map(|absolute_path: PathBuf| {
+            match absolute_path.to_str() {
+                None => None,
+                Some(absolute_path_str) => {
+                    Some(absolute_path_str.to_owned())
+                }
+            }
+        })
+        // Get relative path (returns a PathBuf)
+        .filter_map(|absolute_path_str: String| {
+            match source.to_str() {
+                None => None,
+                Some(source_str) => {
+                    trim_base_path(source_str, &absolute_path_str)
+                },
+            }
+        });
+
+    macro_rules! handle_on_error {
+        ($e:expr) => {
+            match $e {
+                Ok(_) => (),
+                Err(err) => eprintln!("{}", err),
+            }
+        };
+    }
+
+    for relative_path in relative_path_iter {
+        let relative_path: &Path = &relative_path;
+        let path_in_dir = source.join(relative_path);
+        let path_in_file = target.join(relative_path);
+
+        if path_in_dir.is_dir() {
+            handle_on_error!(fs::create_dir(&path_in_file));
+        } else {
+            handle_on_error!(fs::copy(&path_in_dir, &path_in_file));
+        }
+
+        handle_on_error!(filetime::set_file_times(&path_in_file, time, time));
+    }
+
+    handle_on_error!(filetime::set_file_times(target, time, time));
+
+    Ok(())
+}
+
+/// Synchronize 2 directories, only keeps the one with the latest modification time.
+fn synchronize_dirs_replace<'t1, 't2, 'r>(
+    dir1_path: &'t1 Path,
+    dir2_path: &'t2 Path,
+) -> SyncResult<'r> {
+    /// Unwrap or print error and return.
+    macro_rules! unwrap_result {
+        ($e:expr) => {
+            match $e {
+                Ok(x) => x,
+                Err(err) => return {
+                    eprintln!("{}", err);
+                    Ok(())
+                }
+            }
+        };
+    }
+
+    let dir1_time = FileTime::from_last_modification_time(
+        &unwrap_result!(dir1_path.metadata())
+    );
+
+    let dir2_time = FileTime::from_last_modification_time(
+        &unwrap_result!(dir2_path.metadata())
+    );
+
+    if dir1_time > dir2_time {
+        unwrap_result!(fs::remove_dir_all(dir2_path));
+        unwrap_result!(copy_dir(dir1_path, dir2_path, dir1_time));
+    } else if dir1_time != dir2_time {
+        unwrap_result!(fs::remove_dir_all(dir1_path));
+        unwrap_result!(copy_dir(dir2_path, dir1_path, dir2_time));
+    }
+
+    Ok(())
+}
+
 fn dir_latest_modification_time<'r, 't>(path: &'t Path) -> Result<FileTime, &'r std::error::Error> {
     let result_err: Option<&std::error::Error> = None;
 
