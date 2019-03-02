@@ -150,7 +150,9 @@ fn synchronize_dirs<'r>(dir1: &Path, dir2: &Path) -> SyncResult<'r> {
         };
 
         // Paths that are part of a macOS app are already handled if they exists in both dirs => skip.
-        if is_part_of_mac_app(&path_in_dir) && path_in_other_dir.exists() { continue }
+        if is_part_of_mac_app(&path_in_dir) && path_in_other_dir.exists() {
+            continue;
+        }
 
         if path_in_dir.is_file() {
             if path_in_other_dir.is_file() {
@@ -181,7 +183,7 @@ fn synchronize_dirs<'r>(dir1: &Path, dir2: &Path) -> SyncResult<'r> {
             // path_in_dir: dir (macOS app), path_in_other_dir: dir (macOS app)
 
             synchronize_dirs_replace(&path_in_dir, &path_in_other_dir)?;
-        }
+        } // else path_in_dir: dir, path_in_other_dir: dir => ignore.
     }
 
     Ok(())
@@ -270,32 +272,22 @@ fn copy_dir<'t1, 't2, 'r>(source: &'t1 Path, target: &'t2 Path, time: FileTime) 
         .min_depth(1)
         .into_iter()
         // Get path
-        .filter_map(|e: walkdir::Result<DirEntry>| {
-            match e {
-                Ok(x) => Some(x.path().to_owned()),
-                Err(err) => {
-                    eprintln!("{}", err);
-                    None
-                }
+        .filter_map(|e: walkdir::Result<DirEntry>| match e {
+            Ok(x) => Some(x.path().to_owned()),
+            Err(err) => {
+                eprintln!("{}", err);
+                None
             }
         })
         // Get path string representation
-        .filter_map(|absolute_path: PathBuf| {
-            match absolute_path.to_str() {
-                None => None,
-                Some(absolute_path_str) => {
-                    Some(absolute_path_str.to_owned())
-                }
-            }
+        .filter_map(|absolute_path: PathBuf| match absolute_path.to_str() {
+            None => None,
+            Some(absolute_path_str) => Some(absolute_path_str.to_owned()),
         })
         // Get relative path (returns a PathBuf)
-        .filter_map(|absolute_path_str: String| {
-            match source.to_str() {
-                None => None,
-                Some(source_str) => {
-                    trim_base_path(source_str, &absolute_path_str)
-                },
-            }
+        .filter_map(|absolute_path_str: String| match source.to_str() {
+            None => None,
+            Some(source_str) => trim_base_path(source_str, &absolute_path_str),
         });
 
     macro_rules! handle_on_error {
@@ -336,21 +328,19 @@ fn synchronize_dirs_replace<'t1, 't2, 'r>(
         ($e:expr) => {
             match $e {
                 Ok(x) => x,
-                Err(err) => return {
-                    eprintln!("{}", err);
-                    Ok(())
+                Err(err) => {
+                    return {
+                        eprintln!("{}", err);
+                        Ok(())
+                    }
                 }
             }
         };
     }
 
-    let dir1_time = FileTime::from_last_modification_time(
-        &unwrap_result!(dir1_path.metadata())
-    );
+    let dir1_time = FileTime::from_last_modification_time(&unwrap_result!(dir1_path.metadata()));
 
-    let dir2_time = FileTime::from_last_modification_time(
-        &unwrap_result!(dir2_path.metadata())
-    );
+    let dir2_time = FileTime::from_last_modification_time(&unwrap_result!(dir2_path.metadata()));
 
     if dir1_time > dir2_time {
         unwrap_result!(fs::remove_dir_all(dir2_path));
