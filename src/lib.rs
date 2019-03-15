@@ -389,4 +389,60 @@ fn dir_latest_modification_time<'r, 't>(path: &'t Path) -> Result<FileTime, &'r 
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+
+    #[test]
+    fn trim_base_path_unix() {
+        let base = "/some/path";
+        let entry = "/some/path/to/entry";
+        let trimmed = super::trim_base_path(base, entry);
+
+        assert_eq!(trimmed, Some(std::path::PathBuf::from("to/entry")))
+    }
+
+    #[test]
+    fn trim_base_path_windows() {
+        let base = "C:\\some\\path";
+        let entry = "C:\\some\\path\\to\\entry";
+        let trimmed = super::trim_base_path(base, entry);
+
+        assert_eq!(trimmed, Some(std::path::PathBuf::from("to\\entry")))
+    }
+
+    #[test]
+    fn path_has_extension_true() {
+        let path = &std::path::Path::new("hello/rust.rs");
+        let extension = "rs";
+        let has_extension = super::path_has_extension(path, extension);
+
+        assert!(has_extension)
+    }
+
+    #[test]
+    fn path_has_extension_false() {
+        let path = &std::path::Path::new("hello/rust.rs");
+        let not_extension = "md";
+        let has_extension = super::path_has_extension(path, not_extension);
+
+        assert!(!has_extension)
+    }
+
+    // Not available in other OSes yet.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn is_part_of_mac_app_true() {
+        let path_inside_app = std::path::Path::new("/Applications/App Store.app/randomStuff");
+        let is_part_of_mac_app = super::is_part_of_mac_app(path_inside_app);
+
+        assert!(is_part_of_mac_app)
+    }
+
+    #[test]
+    fn is_part_of_mac_app_false() {
+        let path_outside_app = std::path::Path::new("hello/myAppOrNotReally/randomThingy");
+        let is_part_of_mac_app = super::is_part_of_mac_app(path_outside_app);
+
+        assert!(!is_part_of_mac_app)
+    }
+
+}
