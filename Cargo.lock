@@ -191,9 +191,23 @@ name = "keep_keeping"
 version = "0.1.0"
 dependencies = [
  "filetime 0.2.4 (registry+https://github.com/rust-lang/crates.io-index)",
- "iui 0.3.0 (git+https://github.com/rust-native-ui/libui-rs.git)",
- "nfd 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "walkdir 2.2.7 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "keep_keeping_cli"
+version = "0.1.0"
+dependencies = [
+ "keep_keeping 0.1.0",
+]
+
+[[package]]
+name = "keep_keeping_gui"
+version = "0.1.0"
+dependencies = [
+ "iui 0.3.0 (git+https://github.com/rust-native-ui/libui-rs.git)",
+ "keep_keeping 0.1.0",
+ "nfd 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

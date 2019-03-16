@@ -3,7 +3,7 @@
 use iui::prelude::*;
 use iui::controls::*;
 
-pub fn run() {
+pub fn main() {
     let ui = UI::init()
         .expect("Failed to initialize UI");
 
@@ -75,7 +75,7 @@ pub fn run() {
             } else if !path2.exists() {
                 win.set_title(&ui, "Keep Keeping – Path 2 does not exist");
             } else {
-                use super::lib::synchronize;
+                use keep_keeping::synchronize;
 
                 win.set_title(&ui, "Keep Keeping – Synchronizing…");
                 let _ = synchronize(path1, path2);

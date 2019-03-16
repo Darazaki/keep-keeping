@@ -1,14 +1,8 @@
 [package]
-name = "keep_keeping"
+name = "keep_keeping_cli"
 version = "0.1.0"
 authors = ["Naqua Darazaki <n.darazaki@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-walkdir = "2"
-filetime = "0.2"
-
-[workspace]
-members = [
-    "cli", "gui"
-]
+keep_keeping = { path = ".." }
