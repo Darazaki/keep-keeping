@@ -7,7 +7,7 @@ This program will overwrite the files with the oldest modification date with the
 ## Features and WIP
 
 - [x] GUI;
-- [ ] CLI;
+- [x] CLI;
 - [x] Synchronize two directories together;
 - [ ] Unidirectional synchronization;
 - [x] Allow initial path pointing to a file;
