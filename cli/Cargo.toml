@@ -6,3 +6,4 @@ edition = "2018"
 
 [dependencies]
 keep_keeping = { path = ".." }
+clap = "2.32"
