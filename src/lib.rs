@@ -44,9 +44,7 @@ fn is_mac_app(path: &Path) -> bool {
 fn is_part_of_mac_app(path: &Path) -> bool {
     let mut current_path_option = path.parent();
 
-    while current_path_option.is_some() {
-        let current_path: &Path = current_path_option.unwrap();
-
+    while let Some(current_path) = current_path_option {
         if is_mac_app(current_path) {
             return true;
         }
