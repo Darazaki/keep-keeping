@@ -1,11 +1,23 @@
 #![forbid(unsafe_code)]
 
 use filetime::FileTime;
+use std::cell::RefCell;
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::{DirEntry, WalkDir};
 
-type SyncResult<'t> = Result<(), &'t std::error::Error>;
+/// Precise how should an error be handled.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ErrorHandlingType {
+    /// Panic.
+    Panic,
+    /// Stop synchronizing.
+    Fail,
+    /// Skip the current element and continue synchronizing.
+    Skip,
+    /// Continue as if no error happened.
+    Ignore,
+}
 
 #[allow(unused_macros)]
 macro_rules! unused {
@@ -23,8 +35,12 @@ fn trim_base_path(base_path: &str, entry_path: &str) -> Option<PathBuf> {
         .skip(1)
         .collect();
 
-    if let Ok(trimmed_path) = String::from_utf8(trimmed_path_bytes) {
-        Some(PathBuf::from(trimmed_path))
+    if base_bytes.next().is_none() {
+        if let Ok(trimmed_path) = String::from_utf8(trimmed_path_bytes) {
+            Some(PathBuf::from(trimmed_path))
+        } else {
+            None
+        }
     } else {
         None
     }
@@ -55,30 +71,31 @@ fn is_part_of_mac_app(path: &Path) -> bool {
     false
 }
 
-pub fn synchronize<'r>(path1: &Path, path2: &Path) -> SyncResult<'r> {
+pub fn synchronize<FErr>(path1: &Path, path2: &Path, on_err: FErr) -> Result<(), ()>
+where
+    FErr: Fn(&std::error::Error) -> ErrorHandlingType,
+{
     if path1.is_dir() {
         if path2.is_dir() {
             // path1 & path2: dir
 
             if path_has_extension(path1, "app") || path_has_extension(path2, "app") {
                 // macOS app(s)
-
-                synchronize_dirs_replace(path1, path2)
+                synchronize_dirs_replace(path1, path2, &on_err)
             } else {
                 // regular dir(s)
-
-                synchronize_dirs(path1, path2)
+                synchronize_dirs(path1, path2, &on_err)
             }
         } else {
             // path1: dir, path2: file
-            synchronize_file_with_dir(path2, path1)
+            synchronize_file_with_dir(path2, path1, &on_err)
         }
     } else if path2.is_file() {
         // path1 & path2: file
-        synchronize_files(path1, path2)
+        synchronize_files(path1, path2, &on_err)
     } else {
         // path1: file, path2: dir
-        synchronize_file_with_dir(path1, path2)
+        synchronize_file_with_dir(path1, path2, &on_err)
     }
 }
 
@@ -89,51 +106,104 @@ const DIR1_SYMLINK_ID: u8 = 2;
 const DIR2_SYMLINK_ID: u8 = 3;
 */
 
-macro_rules! some_or_return {
-    ($e:expr) => {
-        match $e {
-            Some(x) => x,
-            None => return None,
-        }
-    };
-}
-
-fn id_and_relative_path_from_dir_entry<'r>(
-    entry: &'r walkdir::Result<DirEntry>,
-    base_path: &'r Path,
+fn id_and_relative_path_from_dir_entry<FErr>(
+    entry: &walkdir::Result<DirEntry>,
+    base_path: &Path,
     dir_id_no_symlink: u8,
-) -> Option<(u8, PathBuf)> {
+    on_err: &FErr,
+) -> Result<(u8, PathBuf), ErrorHandlingType>
+where
+    FErr: Fn(&std::error::Error) -> ErrorHandlingType,
+{
     match entry {
         Err(err) => {
-            eprintln!("{}", err);
-            None
+            use ErrorHandlingType::*;
+
+            match on_err(err) {
+                Panic => panic!(),
+                handling => Err(handling),
+            }
         }
         Ok(entry) => {
             let dir_id = if entry.path_is_symlink() { 2 } else { 0 } + dir_id_no_symlink;
             let path: &Path = entry.path();
 
+            macro_rules! some_or_return {
+                ($e:expr) => {
+                    match $e {
+                        Some(x) => x,
+                        None => return Err(ErrorHandlingType::Ignore),
+                    }
+                };
+            }
+
             let path_str = some_or_return!(path.to_str());
             let base_path_str = some_or_return!(base_path.to_str());
             let trimmed = some_or_return!(trim_base_path(base_path_str, path_str));
 
-            Some((dir_id, trimmed))
+            Ok((dir_id, trimmed))
         }
     }
 }
 
-fn synchronize_dirs<'r>(dir1: &Path, dir2: &Path) -> SyncResult<'r> {
+fn synchronize_dirs<FErr>(dir1: &Path, dir2: &Path, on_err: &FErr) -> Result<(), ()>
+where
+    FErr: Fn(&std::error::Error) -> ErrorHandlingType,
+{
+    let skip = RefCell::from(false);
+    let fail = RefCell::from(false);
+
+    macro_rules! id_and_relative_path {
+        ($e:expr, $dir:expr, $id:expr, $on_err:expr) => {
+            match id_and_relative_path_from_dir_entry($e, $dir, $id, $on_err) {
+                Ok(x) => Some(x),
+                Err(handle) => {
+                    use ErrorHandlingType::*;
+
+                    match handle {
+                        Panic => unreachable!(),
+                        Fail => *fail.borrow_mut() = true,
+                        Skip => *skip.borrow_mut() = true,
+                        Ignore => (),
+                    };
+
+                    None
+                }
+            }
+        };
+    }
+
+    macro_rules! handle_error {
+        ($err:expr) => {
+            use ErrorHandlingType::*;
+
+            match on_err($err) {
+                Panic => panic!(),
+                Fail => return Err(()),
+                Skip => return Ok(()),
+                Ignore => (),
+            };
+        };
+    }
+
     let dir_iterator = WalkDir::new(dir1)
         .min_depth(1)
         .into_iter()
-        .filter_map(|e| id_and_relative_path_from_dir_entry(&e, dir1, 0))
+        .filter_map(|e| id_and_relative_path!(&e, dir1, 0, on_err))
         .chain(
             WalkDir::new(dir2)
                 .min_depth(1)
                 .into_iter()
-                .filter_map(|e| id_and_relative_path_from_dir_entry(&e, dir2, 1))
+                .filter_map(|e| id_and_relative_path!(&e, dir2, 1, on_err))
                 // never synchronize the same path twice
                 .filter(|(_, rel_path)| !dir1.join(rel_path).exists()),
         );
+
+    if *fail.borrow() {
+        return Err(());
+    } else if *skip.borrow() {
+        return Ok(());
+    }
 
     for (dir_id, relative_path) in dir_iterator {
         let path_in_dir1 = dir1.join(&relative_path);
@@ -157,37 +227,53 @@ fn synchronize_dirs<'r>(dir1: &Path, dir2: &Path) -> SyncResult<'r> {
                 // `path_in_other_dir` exists and points to a file
                 // Check timestamps, and overwrite the older with the recent one.
 
-                synchronize_files(&path_in_dir, &path_in_other_dir)?;
+                synchronize_files(&path_in_dir, &path_in_other_dir, on_err)?;
             } else if path_in_other_dir.is_dir() {
-                synchronize_file_with_dir(&path_in_dir, &path_in_other_dir)?;
+                synchronize_file_with_dir(&path_in_dir, &path_in_other_dir, on_err)?;
             } else {
                 // path does not exist in other dir
 
                 if let Err(err) = std::fs::copy(path_in_dir, path_in_other_dir) {
-                    eprintln!("{}", &err);
+                    handle_error!(&err);
                 }
             }
         } else if !path_in_other_dir.exists() {
             // path_in_dir: dir, path_in_other_dir: nothing
 
             if let Err(err) = std::fs::create_dir(path_in_other_dir) {
-                eprintln!("{}", &err);
+                handle_error!(&err);
             }
         } else if path_in_other_dir.is_file() {
             // path_in_dir: dir, path_in_other_dir: file
 
-            synchronize_file_with_dir(&path_in_other_dir, &path_in_dir)?;
+            synchronize_file_with_dir(&path_in_other_dir, &path_in_dir, on_err)?;
         } else if is_mac_app(&path_in_dir) {
             // path_in_dir: dir (macOS app), path_in_other_dir: dir (macOS app)
 
-            synchronize_dirs_replace(&path_in_dir, &path_in_other_dir)?;
+            synchronize_dirs_replace(&path_in_dir, &path_in_other_dir, on_err)?;
         } // else path_in_dir: dir, path_in_other_dir: dir => ignore.
     }
 
     Ok(())
 }
 
-fn synchronize_files<'r>(path1: &Path, path2: &Path) -> SyncResult<'r> {
+fn synchronize_files<FErr>(path1: &Path, path2: &Path, on_err: &FErr) -> Result<(), ()>
+where
+    FErr: Fn(&std::error::Error) -> ErrorHandlingType,
+{
+    macro_rules! handle_error {
+        (use $on_err:ident for $err:ident) => {
+            use ErrorHandlingType::*;
+
+            let handle = $on_err(&$err);
+            match handle {
+                Panic => panic!(),
+                Fail => return Err(()),
+                Skip | Ignore => (),
+            }
+        };
+    }
+
     let time_in_dir = FileTime::from_last_modification_time(
         &std::fs::metadata(path1).expect("This should never happen"),
     );
@@ -208,31 +294,40 @@ fn synchronize_files<'r>(path1: &Path, path2: &Path) -> SyncResult<'r> {
         if !parent_path.exists() {
             // should be created before => should never happen
             if let Err(err) = std::fs::create_dir_all(parent_path) {
-                eprintln!("{}", err);
-                return Ok(()); // failure => skip
+                handle_error!(use on_err for err);
             }
         }
     }
 
     if let Err(err) = std::fs::copy(source_path, target_path) {
-        eprintln!("{}", err);
+        handle_error!(use on_err for err);
     }
 
     if let Err(err) = filetime::set_file_times(source_path, max_time, max_time) {
-        eprintln!("{}", err)
+        handle_error!(use on_err for err);
     }
 
     Ok(())
 }
 
-fn synchronize_file_with_dir<'r>(file_path: &Path, dir_path: &Path) -> SyncResult<'r> {
+fn synchronize_file_with_dir<FErr>(
+    file_path: &Path,
+    dir_path: &Path,
+    on_err: &FErr,
+) -> Result<(), ()>
+where
+    FErr: Fn(&std::error::Error) -> ErrorHandlingType,
+{
     macro_rules! unwrap_result {
         ($e:expr) => {
             match $e {
                 Err(err) => {
-                    return {
-                        eprintln!("{}", err);
-                        Ok(())
+                    use ErrorHandlingType::*;
+
+                    match on_err(&err) {
+                        Panic => panic!(),
+                        Fail => return Err(()),
+                        Skip | Ignore => return Ok(()),
                     }
                 }
                 Ok(x) => x,
@@ -242,13 +337,16 @@ fn synchronize_file_with_dir<'r>(file_path: &Path, dir_path: &Path) -> SyncResul
 
     let file_time = FileTime::from_last_modification_time(&unwrap_result!(file_path.metadata()));
 
-    let dir_time = match dir_latest_modification_time(dir_path) {
+    let dir_time = match dir_latest_modification_time(dir_path, on_err) {
         Ok(x) => x,
         Err(err) => {
-            return {
-                eprintln!("{}", err);
-                Ok(())
-            }
+            use ErrorHandlingType::*;
+
+            return match err {
+                Fail => Err(()),
+                Skip => Ok(()),
+                _ => unreachable!(),
+            };
         }
     };
 
@@ -259,13 +357,27 @@ fn synchronize_file_with_dir<'r>(file_path: &Path, dir_path: &Path) -> SyncResul
     } else {
         unwrap_result!(fs::remove_file(file_path));
         unwrap_result!(fs::create_dir(file_path));
-        copy_dir(dir_path, file_path, dir_time)?;
+        match copy_dir(dir_path, file_path, dir_time, on_err) {
+            Ok(_) => (),
+            Err(_) => return Err(()),
+        }
     }
 
     Ok(())
 }
 
-fn copy_dir<'t1, 't2, 'r>(source: &'t1 Path, target: &'t2 Path, time: FileTime) -> SyncResult<'r> {
+fn copy_dir<'t1, 't2, FErr>(
+    source: &'t1 Path,
+    target: &'t2 Path,
+    time: FileTime,
+    on_err: &FErr,
+) -> Result<(), ()>
+where
+    FErr: Fn(&std::error::Error) -> ErrorHandlingType,
+{
+    let skip = RefCell::from(false);
+    let fail = RefCell::from(false);
+
     let relative_path_iter = WalkDir::new(source)
         .min_depth(1)
         .into_iter()
@@ -273,7 +385,15 @@ fn copy_dir<'t1, 't2, 'r>(source: &'t1 Path, target: &'t2 Path, time: FileTime) 
         .filter_map(|e: walkdir::Result<DirEntry>| match e {
             Ok(x) => Some(x.path().to_owned()),
             Err(err) => {
-                eprintln!("{}", err);
+                use ErrorHandlingType::*;
+
+                match on_err(&err) {
+                    Panic => panic!(),
+                    Fail => *fail.borrow_mut() = true,
+                    Skip => *skip.borrow_mut() = true,
+                    Ignore => (),
+                }
+
                 None
             }
         })
@@ -288,11 +408,25 @@ fn copy_dir<'t1, 't2, 'r>(source: &'t1 Path, target: &'t2 Path, time: FileTime) 
             Some(source_str) => trim_base_path(source_str, &absolute_path_str),
         });
 
+    if *fail.borrow() {
+        return Err(());
+    } else if *skip.borrow() {
+        return Ok(());
+    }
+
     macro_rules! handle_on_error {
         ($e:expr) => {
             match $e {
                 Ok(_) => (),
-                Err(err) => eprintln!("{}", err),
+                Err(err) => {
+                    use ErrorHandlingType::*;
+
+                    match on_err(&err) {
+                        Panic => panic!(),
+                        Fail => return Err(()),
+                        Skip | Ignore => return Ok(()),
+                    }
+                }
             }
         };
     }
@@ -317,19 +451,26 @@ fn copy_dir<'t1, 't2, 'r>(source: &'t1 Path, target: &'t2 Path, time: FileTime) 
 }
 
 /// Synchronize 2 directories, only keeps the one with the latest modification time.
-fn synchronize_dirs_replace<'t1, 't2, 'r>(
+fn synchronize_dirs_replace<'t1, 't2, FErr>(
     dir1_path: &'t1 Path,
     dir2_path: &'t2 Path,
-) -> SyncResult<'r> {
+    on_err: &FErr,
+) -> Result<(), ()>
+where
+    FErr: Fn(&std::error::Error) -> ErrorHandlingType,
+{
     /// Unwrap or print error and return.
     macro_rules! unwrap_result {
         ($e:expr) => {
             match $e {
                 Ok(x) => x,
                 Err(err) => {
-                    return {
-                        eprintln!("{}", err);
-                        Ok(())
+                    use ErrorHandlingType::*;
+
+                    match on_err(&err) {
+                        Panic => panic!(),
+                        Fail => return Err(()),
+                        Skip | Ignore => return Ok(()),
                     }
                 }
             }
@@ -342,33 +483,48 @@ fn synchronize_dirs_replace<'t1, 't2, 'r>(
 
     if dir1_time > dir2_time {
         unwrap_result!(fs::remove_dir_all(dir2_path));
-        unwrap_result!(copy_dir(dir1_path, dir2_path, dir1_time));
+        copy_dir(dir1_path, dir2_path, dir1_time, on_err)?;
     } else if dir1_time != dir2_time {
         unwrap_result!(fs::remove_dir_all(dir1_path));
-        unwrap_result!(copy_dir(dir2_path, dir1_path, dir2_time));
+        copy_dir(dir2_path, dir1_path, dir2_time, on_err)?;
     }
 
     Ok(())
 }
 
-fn dir_latest_modification_time<'r, 't>(path: &'t Path) -> Result<FileTime, &'r std::error::Error> {
-    let result_err: Option<&std::error::Error> = None;
+fn dir_latest_modification_time<'t, FErr>(
+    path: &'t Path,
+    on_err: &FErr,
+) -> Result<FileTime, ErrorHandlingType>
+where
+    FErr: Fn(&std::error::Error) -> ErrorHandlingType,
+{
+    let mut skip = false;
+    let mut fail = false;
+
+    macro_rules! unwrap_result {
+        ($e:expr) => {
+            match $e {
+                Err(err) => {
+                    use ErrorHandlingType::*;
+
+                    match on_err(&err) {
+                        Panic => panic!(),
+                        Fail => fail = true,
+                        Skip => skip = true,
+                        Ignore => (),
+                    }
+
+                    return None;
+                }
+                Ok(x) => x,
+            }
+        };
+    }
 
     let max = WalkDir::new(path)
         .into_iter()
         .filter_map(|e: walkdir::Result<DirEntry>| {
-            macro_rules! unwrap_result {
-                ($e:expr) => {
-                    match $e {
-                        Err(err) => {
-                            eprintln!("{}", &err);
-                            return None;
-                        }
-                        Ok(x) => x,
-                    }
-                };
-            }
-
             let e = unwrap_result!(e);
 
             let path: &Path = e.path();
@@ -380,9 +536,12 @@ fn dir_latest_modification_time<'r, 't>(path: &'t Path) -> Result<FileTime, &'r 
         .max()
         .unwrap_or_else(FileTime::zero);
 
-    match result_err {
-        Some(err) => Err(err),
-        None => Ok(max),
+    if fail {
+        Err(ErrorHandlingType::Fail)
+    } else if skip {
+        Err(ErrorHandlingType::Skip)
+    } else {
+        Ok(max)
     }
 }
 

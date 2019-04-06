@@ -1,13 +1,18 @@
 #![forbid(unsafe_code)]
 
-use iui::prelude::*;
 use iui::controls::*;
+use iui::prelude::*;
 
 pub fn main() {
-    let ui = UI::init()
-        .expect("Failed to initialize UI");
+    let ui = UI::init().expect("Failed to initialize UI");
 
-    let mut win = Window::new(&ui, "Keep Keeping – Started", 350, 250, WindowType::NoMenubar);
+    let mut win = Window::new(
+        &ui,
+        "Keep Keeping – Started",
+        350,
+        250,
+        WindowType::NoMenubar,
+    );
 
     let mut box_v = VerticalBox::new(&ui);
     box_v.set_padded(&ui, true);
@@ -75,19 +80,20 @@ pub fn main() {
             } else if !path2.exists() {
                 win.set_title(&ui, "Keep Keeping – Path 2 does not exist");
             } else {
-                use keep_keeping::synchronize;
+                use keep_keeping::{synchronize, ErrorHandlingType};
 
                 win.set_title(&ui, "Keep Keeping – Synchronizing…");
-                let _ = synchronize(path1, path2);
-                win.set_title(&ui, "Keep Keeping – Done");
+                match synchronize(path1, path2, |_| ErrorHandlingType::Fail) {
+                    Ok(_) => win.set_title(&ui, "Keep Keeping – Done"),
+                    Err(_) => win.set_title(&ui, "Keep Keeping – Failure"),
+                };
             }
         }
     });
-    
+
     box_v.append(&ui, box_path1, LayoutStrategy::Compact);
     box_v.append(&ui, box_path2, LayoutStrategy::Compact);
     box_v.append(&ui, button_synchronize, LayoutStrategy::Compact);
-
 
     win.set_child(&ui, box_v);
     win.on_closing(&ui, {
