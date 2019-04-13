@@ -9,8 +9,6 @@ use walkdir::{DirEntry, WalkDir};
 /// Precise how should an error be handled.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ErrorHandlingType {
-    /// Panic.
-    Panic,
     /// Stop synchronizing.
     Fail,
     /// Skip the current element and continue synchronizing.
@@ -116,14 +114,7 @@ where
     FErr: Fn(&std::error::Error) -> ErrorHandlingType,
 {
     match entry {
-        Err(err) => {
-            use ErrorHandlingType::*;
-
-            match on_err(err) {
-                Panic => panic!(),
-                handling => Err(handling),
-            }
-        }
+        Err(err) => Err(on_err(err)),
         Ok(entry) => {
             let dir_id = if entry.path_is_symlink() { 2 } else { 0 } + dir_id_no_symlink;
             let path: &Path = entry.path();
@@ -161,7 +152,6 @@ where
                     use ErrorHandlingType::*;
 
                     match handle {
-                        Panic => unreachable!(),
                         Fail => *fail.borrow_mut() = true,
                         Skip => *skip.borrow_mut() = true,
                         Ignore => (),
@@ -178,7 +168,6 @@ where
             use ErrorHandlingType::*;
 
             match on_err($err) {
-                Panic => panic!(),
                 Fail => return Err(()),
                 Skip => return Ok(()),
                 Ignore => (),
@@ -267,7 +256,6 @@ where
 
             let handle = $on_err(&$err);
             match handle {
-                Panic => panic!(),
                 Fail => return Err(()),
                 Skip | Ignore => (),
             }
@@ -325,7 +313,6 @@ where
                     use ErrorHandlingType::*;
 
                     match on_err(&err) {
-                        Panic => panic!(),
                         Fail => return Err(()),
                         Skip | Ignore => return Ok(()),
                     }
@@ -388,7 +375,6 @@ where
                 use ErrorHandlingType::*;
 
                 match on_err(&err) {
-                    Panic => panic!(),
                     Fail => *fail.borrow_mut() = true,
                     Skip => *skip.borrow_mut() = true,
                     Ignore => (),
@@ -422,7 +408,6 @@ where
                     use ErrorHandlingType::*;
 
                     match on_err(&err) {
-                        Panic => panic!(),
                         Fail => return Err(()),
                         Skip | Ignore => return Ok(()),
                     }
@@ -468,7 +453,6 @@ where
                     use ErrorHandlingType::*;
 
                     match on_err(&err) {
-                        Panic => panic!(),
                         Fail => return Err(()),
                         Skip | Ignore => return Ok(()),
                     }
@@ -509,7 +493,6 @@ where
                     use ErrorHandlingType::*;
 
                     match on_err(&err) {
-                        Panic => panic!(),
                         Fail => fail = true,
                         Skip => skip = true,
                         Ignore => (),
