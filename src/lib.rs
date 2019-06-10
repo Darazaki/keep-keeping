@@ -71,7 +71,7 @@ fn is_part_of_mac_app(path: &Path) -> bool {
 
 pub fn synchronize<FErr>(path1: &Path, path2: &Path, on_err: FErr) -> Result<(), ()>
 where
-    FErr: Fn(&std::error::Error) -> ErrorHandlingType,
+    FErr: Fn(&dyn std::error::Error) -> ErrorHandlingType,
 {
     if path1.is_dir() {
         if path2.is_dir() {
@@ -111,7 +111,7 @@ fn id_and_relative_path_from_dir_entry<FErr>(
     on_err: &FErr,
 ) -> Result<(u8, PathBuf), ErrorHandlingType>
 where
-    FErr: Fn(&std::error::Error) -> ErrorHandlingType,
+    FErr: Fn(&dyn std::error::Error) -> ErrorHandlingType,
 {
     match entry {
         Err(err) => Err(on_err(err)),
@@ -139,7 +139,7 @@ where
 
 fn synchronize_dirs<FErr>(dir1: &Path, dir2: &Path, on_err: &FErr) -> Result<(), ()>
 where
-    FErr: Fn(&std::error::Error) -> ErrorHandlingType,
+    FErr: Fn(&dyn std::error::Error) -> ErrorHandlingType,
 {
     let skip = RefCell::from(false);
     let fail = RefCell::from(false);
@@ -248,7 +248,7 @@ where
 
 fn synchronize_files<FErr>(path1: &Path, path2: &Path, on_err: &FErr) -> Result<(), ()>
 where
-    FErr: Fn(&std::error::Error) -> ErrorHandlingType,
+    FErr: Fn(&dyn std::error::Error) -> ErrorHandlingType,
 {
     macro_rules! handle_error {
         (use $on_err:ident for $err:ident) => {
@@ -304,7 +304,7 @@ fn synchronize_file_with_dir<FErr>(
     on_err: &FErr,
 ) -> Result<(), ()>
 where
-    FErr: Fn(&std::error::Error) -> ErrorHandlingType,
+    FErr: Fn(&dyn std::error::Error) -> ErrorHandlingType,
 {
     macro_rules! unwrap_result {
         ($e:expr) => {
@@ -360,7 +360,7 @@ fn copy_dir<'t1, 't2, FErr>(
     on_err: &FErr,
 ) -> Result<(), ()>
 where
-    FErr: Fn(&std::error::Error) -> ErrorHandlingType,
+    FErr: Fn(&dyn std::error::Error) -> ErrorHandlingType,
 {
     let skip = RefCell::from(false);
     let fail = RefCell::from(false);
@@ -442,7 +442,7 @@ fn synchronize_dirs_replace<'t1, 't2, FErr>(
     on_err: &FErr,
 ) -> Result<(), ()>
 where
-    FErr: Fn(&std::error::Error) -> ErrorHandlingType,
+    FErr: Fn(&dyn std::error::Error) -> ErrorHandlingType,
 {
     /// Unwrap or print error and return.
     macro_rules! unwrap_result {
@@ -481,7 +481,7 @@ fn dir_latest_modification_time<'t, FErr>(
     on_err: &FErr,
 ) -> Result<FileTime, ErrorHandlingType>
 where
-    FErr: Fn(&std::error::Error) -> ErrorHandlingType,
+    FErr: Fn(&dyn std::error::Error) -> ErrorHandlingType,
 {
     let mut skip = false;
     let mut fail = false;
