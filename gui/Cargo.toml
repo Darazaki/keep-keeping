@@ -1,10 +1,10 @@
 [package]
-name = "keep_keeping_gui"
+name = "keep-keeping-gui"
 version = "0.1.0"
 authors = ["Naqua Darazaki <n.darazaki@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-keep_keeping = { path = ".." }
+keep-keeping-lib = { path = ".." }
 iui = { git = "https://github.com/rust-native-ui/libui-rs.git" }
 nfd = { version = "0.0.4" }

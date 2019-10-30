@@ -1,5 +1,5 @@
 [package]
-name = "keep_keeping"
+name = "keep-keeping-lib"
 version = "0.1.0"
 authors = ["Naqua Darazaki <n.darazaki@gmail.com>"]
 edition = "2018"

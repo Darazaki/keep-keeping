@@ -1,9 +1,9 @@
 [package]
-name = "keep_keeping_cli"
+name = "keep-keeping"
 version = "0.1.0"
 authors = ["Naqua Darazaki <n.darazaki@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-keep_keeping = { path = ".." }
+keep-keeping-lib = { path = ".." }
 clap = "2.33"

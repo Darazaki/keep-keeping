@@ -1,6 +1,8 @@
 #[macro_use]
 extern crate clap;
 
+use keep_keeping_lib as keep_keeping;
+
 use std::cmp::Ordering;
 use std::path::Path;
 use std::process::exit;
