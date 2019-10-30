@@ -37,7 +37,7 @@ fn synchronize_or_exit(path1_str: &str, path2_str: &str) {
     let path1_exists = path1.exists();
     let path2_exists = path2.exists();
 
-    let on_err = |err: &std::error::Error| {
+    let on_err = |err: &dyn std::error::Error| {
         eprintln!("Error: {}", err);
 
         keep_keeping::ErrorHandlingType::Fail

@@ -270,12 +270,11 @@ where
         &std::fs::metadata(path2).expect("This should never happen"),
     );
 
-    let (source_path, target_path, max_time) = if time_in_dir > time_in_other_dir {
-        (path1, path2, time_in_dir)
-    } else if time_in_dir < time_in_other_dir {
-        (path2, path1, time_in_other_dir)
-    } else {
-        return Ok(()); // already synchronized => skip
+    use std::cmp::Ordering;
+    let (source_path, target_path, max_time) = match time_in_dir.cmp(&time_in_other_dir) {
+        Ordering::Greater => (path1, path2, time_in_dir),
+        Ordering::Less => (path2, path1, time_in_other_dir),
+        Ordering::Equal => return Ok(()), // already synchronized => skip
     };
 
     if let Some(parent_path) = target_path.parent() {
@@ -584,5 +583,4 @@ mod tests {
 
         assert!(!is_part_of_mac_app)
     }
-
 }
