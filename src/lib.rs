@@ -24,6 +24,7 @@ macro_rules! unused {
     };
 }
 
+/// Remove the a base path from another path, making it relative the the base path.
 fn trim_base_path(base_path: &str, entry_path: &str) -> Option<PathBuf> {
     let mut base_bytes = base_path.bytes();
     let entry_bytes = entry_path.bytes();
@@ -97,12 +98,10 @@ where
     }
 }
 
-/*
 const DIR1_NOT_SYMLINK_ID: u8 = 0;
-const DIR2_NOT_SYMLINK_ID: u8 = 1;
+// const DIR2_NOT_SYMLINK_ID: u8 = 1;
 const DIR1_SYMLINK_ID: u8 = 2;
-const DIR2_SYMLINK_ID: u8 = 3;
-*/
+// const DIR2_SYMLINK_ID: u8 = 3;
 
 fn id_and_relative_path_from_dir_entry<FErr>(
     entry: &walkdir::Result<DirEntry>,
@@ -116,7 +115,7 @@ where
     match entry {
         Err(err) => Err(on_err(err)),
         Ok(entry) => {
-            let dir_id = if entry.path_is_symlink() { 2 } else { 0 } + dir_id_no_symlink;
+            let dir_id = if entry.path_is_symlink() { DIR1_SYMLINK_ID } else { DIR1_NOT_SYMLINK_ID } + dir_id_no_symlink;
             let path: &Path = entry.path();
 
             macro_rules! some_or_return {
@@ -137,6 +136,7 @@ where
     }
 }
 
+/// Synchronize 2 directories, merging their files and keeping only their newest versions.
 fn synchronize_dirs<FErr>(dir1: &Path, dir2: &Path, on_err: &FErr) -> Result<(), ()>
 where
     FErr: Fn(&dyn std::error::Error) -> ErrorHandlingType,
@@ -200,7 +200,7 @@ where
 
         // `path_in_dir` is where the element is in the scanned directory,
         // `path_in_other_dir` is where the element should be in the other directory.
-        let (path_in_dir, path_in_other_dir) = if dir_id % 2 == 0 {
+        let (path_in_dir, path_in_other_dir) = if dir_id == DIR1_SYMLINK_ID || dir_id == DIR1_NOT_SYMLINK_ID {
             (path_in_dir1, path_in_dir2)
         } else {
             (path_in_dir2, path_in_dir1)
@@ -246,6 +246,7 @@ where
     Ok(())
 }
 
+/// Synchronize 2 files, replacing the oldest by the newest.
 fn synchronize_files<FErr>(path1: &Path, path2: &Path, on_err: &FErr) -> Result<(), ()>
 where
     FErr: Fn(&dyn std::error::Error) -> ErrorHandlingType,
@@ -352,6 +353,7 @@ where
     Ok(())
 }
 
+/// Copy a directory, preserving the timestamps.
 fn copy_dir<'t1, 't2, FErr>(
     source: &'t1 Path,
     target: &'t2 Path,
