@@ -1,8 +1,10 @@
 # Keep Keeping
 
-A portable GUI and CLI application to keep the latest files synchronized between directories.
+Portable GUI and CLI applications to keep the latest files synchronized between
+directories.
 
-This program will overwrite the files with the oldest modification date with the newest one without saving the old ones, use it at your own risk!
+Those programs will replace the files with the oldest modification date with
+the newest one without saving the old ones, use it at your own risk!
 
 ## Features and WIP
 
@@ -14,8 +16,6 @@ This program will overwrite the files with the oldest modification date with the
 - [ ] Handle symbolic links:
     - recreate the link if it points to a path within the synchronized directory;
     - copy the contents if the link points to a path outside of the synchronized directory;
-- [x] Handle macOS apps.
-
-## Warranties
-
-I do not provide any warranties with this application, use it at your own risk.
+- [x] Handle macOS apps;
+- [ ] Synchronize more than 2 directories at the same time;
+- [ ] Check that the directories that are being synchronized are not parent and child.
