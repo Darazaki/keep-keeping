@@ -6,5 +6,5 @@ edition = "2018"
 
 [dependencies]
 keep-keeping-lib = { path = ".." }
-iui = { git = "https://github.com/rust-native-ui/libui-rs.git" }
+iui = { git = "https://github.com/Darazaki/libui-rs.git" }
 nfd = { version = "0.0.4" }
